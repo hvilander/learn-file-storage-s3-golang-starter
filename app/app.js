@@ -230,6 +230,7 @@ function createVideoStateHandler() {
 }
 
 async function getVideo(videoID) {
+	console.log(here)
   try {
     const res = await fetch(`/api/videos/${videoID}`, {
       method: 'GET',
@@ -243,6 +244,7 @@ async function getVideo(videoID) {
 
     const video = await res.json();
     viewVideo(video);
+		console.log({video})
   } catch (error) {
     alert(`Error: ${error.message}`);
   }
