@@ -230,7 +230,6 @@ function createVideoStateHandler() {
 }
 
 async function getVideo(videoID) {
-	console.log(here)
   try {
     const res = await fetch(`/api/videos/${videoID}`, {
       method: 'GET',
@@ -244,7 +243,6 @@ async function getVideo(videoID) {
 
     const video = await res.json();
     viewVideo(video);
-		console.log({video})
   } catch (error) {
     alert(`Error: ${error.message}`);
   }
@@ -263,7 +261,7 @@ function viewVideo(video) {
     thumbnailImg.style.display = 'none';
   } else {
     thumbnailImg.style.display = 'block';
-    thumbnailImg.src = video.thumbnail_url;
+    thumbnailImg.src = `${video.thumbnail_url}?v=${Date.now()}`;
   }
 
   const videoPlayer = document.getElementById('video-player');
