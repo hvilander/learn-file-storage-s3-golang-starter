@@ -1,18 +1,61 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
+	var buff []byte
+	buffer := bytes.NewBuffer(buff)
+	cmd.Stdout = buffer
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+
+	type FFProbeOutput struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	var probeOut FFProbeOutput
+
+	if err := json.Unmarshal(buffer.Bytes(), &probeOut); err != nil {
+		return "", err
+	}
+	if len(probeOut.Streams) < 1 {
+		return "", fmt.Errorf("no streams found")
+	}
+
+	height := probeOut.Streams[0].Height
+	width := probeOut.Streams[0].Width
+	// very lazy here to det aspect ratio. For the project and samples this is good 'nuff
+	if width/height == 1 {
+		return "16:9", nil
+	}
+
+	if height/width == 1 {
+		return "9:16", nil
+	}
+	return "other", nil
+
+}
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 
@@ -80,6 +123,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	fmt.Println("bytes written to temp file:", n)
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "aspect ratio error", err)
+		return
+	}
+
+	prefix := "other"
+	if aspectRatio == "16:9" {
+		prefix = "landscape"
+	}
+
+	if aspectRatio == "9:16" {
+		prefix = "portrait"
+	}
 
 	// reset the temp files pointer to the begining so we can read it again
 	tempFile.Seek(0, io.SeekStart)
@@ -87,7 +145,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	// make the file name
 	randomPart := make([]byte, 32)
 	rand.Read(randomPart)
-	fileName := fmt.Sprintf("%s.mp4", base64.RawURLEncoding.EncodeToString(randomPart))
+	fileName := fmt.Sprintf("%s/%s.mp4", prefix, base64.RawURLEncoding.EncodeToString(randomPart))
 
 	params := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
