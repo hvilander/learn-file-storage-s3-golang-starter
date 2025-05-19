@@ -17,6 +17,17 @@ import (
 	"github.com/google/uuid"
 )
 
+func processVideoForFastStart(filePath string) (string, error) {
+	fmt.Println("filePath", filePath)
+	outputPath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputPath)
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	return outputPath, nil
+}
+
 func getVideoAspectRatio(filePath string) (string, error) {
 	cmd := exec.Command("ffprobe", "-v", "error", "-print_format", "json", "-show_streams", filePath)
 	var buff []byte
@@ -112,7 +123,6 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 	tempFileName := "temp_tubley_upload.mp4"
 	tempFile, err := os.CreateTemp("", tempFileName)
-	//os.TempDir()
 	defer os.Remove(tempFileName)
 	defer tempFile.Close()
 
@@ -121,6 +131,22 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Copy error", err)
 		return
 	}
+	// create the fast start video
+	fastStartFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error processing video", err)
+		return
+	}
+
+	// get a file reference for an io reader to that file
+	fastStartFile, err := os.Open(fastStartFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error processing file", err)
+		return
+	}
+
+	defer os.Remove(fastStartFilePath)
+	defer fastStartFile.Close()
 
 	fmt.Println("bytes written to temp file:", n)
 	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
@@ -140,7 +166,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	// reset the temp files pointer to the begining so we can read it again
-	tempFile.Seek(0, io.SeekStart)
+	//tempFile.Seek(0, io.SeekStart)
 
 	// make the file name
 	randomPart := make([]byte, 32)
@@ -150,7 +176,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	params := s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &fileName,
-		Body:        tempFile,
+		Body:        fastStartFile,
 		ContentType: &mediaType,
 	}
 
