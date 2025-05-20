@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -11,14 +12,50 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
+	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/database"
 	"github.com/google/uuid"
 )
 
+func (cfg *apiConfig) dbVideoToSignedVideo(video database.Video) (database.Video, error) {
+
+	muhSlice := strings.Split(*video.VideoURL, ",")
+	if len(muhSlice) != 2 {
+		return database.Video{}, fmt.Errorf("error processing url: %s", muhSlice)
+	}
+
+	signedURL, err := generatePresignedURL(cfg.s3Client, muhSlice[0], muhSlice[1], time.Hour)
+	if err != nil {
+		return database.Video{}, err
+	}
+
+	video.VideoURL = &signedURL
+
+	return video, nil
+}
+
+func generatePresignedURL(s3Client *s3.Client, bucket, key string, expireTime time.Duration) (string, error) {
+	presignClient := s3.NewPresignClient(s3Client)
+
+	options := s3.WithPresignExpires(expireTime)
+	params := s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}
+
+	obby, err := presignClient.PresignGetObject(context.TODO(), &params, options)
+	if err != nil {
+		return "", err
+	}
+	return obby.URL, nil
+
+}
+
 func processVideoForFastStart(filePath string) (string, error) {
-	fmt.Println("filePath", filePath)
 	outputPath := filePath + ".processing"
 	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy", "-movflags", "faststart", "-f", "mp4", outputPath)
 	err := cmd.Run()
@@ -186,7 +223,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	videoURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", cfg.s3Bucket, cfg.s3Region, fileName)
+	videoURL := fmt.Sprintf("%s,%s", cfg.s3Bucket, fileName)
 	video.VideoURL = &videoURL
 
 	err = cfg.db.UpdateVideo(video)
@@ -195,5 +232,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	respondWithJSON(w, http.StatusOK, video)
+	signedVideo, err := cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error signing video", err)
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, signedVideo)
 }

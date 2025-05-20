@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
@@ -19,6 +20,7 @@ func (cfg *apiConfig) handlerVideoMetaCreate(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
 		return
 	}
+
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
@@ -95,6 +97,16 @@ func (cfg *apiConfig) handlerVideoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if video.VideoURL != nil {
+		signedVideo, err := cfg.dbVideoToSignedVideo(video)
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "Couldn't get video", err)
+			return
+		}
+		respondWithJSON(w, http.StatusOK, signedVideo)
+		return
+	}
+
 	respondWithJSON(w, http.StatusOK, video)
 }
 
@@ -104,6 +116,7 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 		respondWithError(w, http.StatusUnauthorized, "Couldn't find JWT", err)
 		return
 	}
+
 	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Couldn't validate JWT", err)
@@ -114,6 +127,19 @@ func (cfg *apiConfig) handlerVideosRetrieve(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Couldn't retrieve videos", err)
 		return
+	}
+
+	for i, v := range videos {
+		if v.VideoURL == nil {
+			continue
+		}
+		signed, err := cfg.dbVideoToSignedVideo(v)
+
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "error signing videos in retrieve", err)
+			return
+		}
+		videos[i] = signed
 	}
 
 	respondWithJSON(w, http.StatusOK, videos)
